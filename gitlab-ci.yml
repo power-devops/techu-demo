@@ -1,0 +1,63 @@
+stages:          # List of stages for jobs, and their order of execution
+  - build
+
+create_aix_lpar:
+  stage: .pre
+  tags:
+    - ibmcloud
+  script:
+    - |
+      set -xv
+      ibmcloud login --no-region
+      ibmcloud pi st ${IBMCLOUD_PVS_INSTANCE}
+      LPARNAME="${CI_PROJECT_NAME}-${CI_COMMIT_SHORT_SHA}"
+      ibmcloud pi inc ${LPARNAME} \
+        --memory 2 \
+        --processors 0.25 \
+        --processor-type shared \
+        --network "${IBMCLOUD_PVS_NETWORK}" \
+        --sys-type s922 \
+        --image base-xlc \
+        --key-name gitlab
+      LPARID=$(ibmcloud pi ins --json | jq '.Payload.pvmInstances[] | select (.serverName == "'${LPARNAME}'") | .pvmInstanceID' 2>/dev/null | tr -d \")
+      if [[ -z $LPARID ]] ; then
+        echo "Couldn't determine LPAR ID"
+        exit 1
+      fi
+      echo "LPAR ID is $LPARID"
+      STATUS=$(ibmcloud pi in ${LPARID} --json | jq .status | tr -d \")
+      while [[ $STATUS != "ACTIVE" ]] ; do
+        echo "Status is $STATUS"
+        sleep 5
+        STATUS=$(ibmcloud pi in ${LPARID} --json | jq .status | tr -d \")
+      done
+
+
+destroy_lpar:
+  stage: .post
+  tags:
+    - ibmcloud
+  script:
+    - |
+      ibmcloud login --no-region
+      LPARNAME="${CI_PROJECT_NAME}-${CI_COMMIT_SHORT_SHA}"
+      LPARID=$(ibmcloud pi ins --json | jq '.Payload.pvmInstances[] | select (.serverName == "'${LPARNAME}'") | .pvmInstanceID' 2>/dev/null | tr -d \")
+      if [[ -z $LPARID ]] ; then
+        echo "Couldn't determine LPAR ID"
+        exit 0
+      fi
+      echo "LPAR ID is $LPARID"
+      ibmcloud pi ind ${LPARID}
+      
+
+build-job:       # This job runs in the build stage
+  stage: build
+  artifacts:
+      paths:
+        - hello
+  tags:
+      - aix
+      - xlc
+  script:
+    - make
+
